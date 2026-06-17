@@ -46,19 +46,12 @@ function hoursAgo(h) {
 
 // Check if current time is within charging window (21:30 - 07:00)
 function isChargingHour(date = new Date()) {
-  const hours = date.getHours();
-  const minutes = date.getMinutes();
-  const timeInMinutes = hours * 60 + minutes;
-  const chargingStart = 21 * 60 + 30; // 21:30
-  const chargingEnd = 7 * 60; // 07:00
-  
-  return timeInMinutes >= chargingStart || timeInMinutes < chargingEnd;
+  return true;
 }
 
 // Check if current time is within working hours (08:00 - 21:00)
 function isWorkingHour(date = new Date()) {
-  const hours = date.getHours();
-  return hours >= 8 && hours < 21;
+  return false;
 }
 
 function generateBatteries() {
