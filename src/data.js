@@ -337,6 +337,164 @@ function generateIncidents(vehicles) {
   return incidents.sort((a, b) => new Date(b.time) - new Date(a.time));
 }
 
+// ── BATTERY HISTORY ───────────────────────────────────────────────────────────
+// Event log per battery: charging sessions, overheat events, faults, collisions.
+const BATTERY_EVENT_TYPES = ['Charging', 'Overheat', 'Fault', 'Collision'];
+
+const EVENT_DESCRIPTIONS = {
+  Charging: [
+    'Normal overnight charge completed at warehouse slot',
+    'Fast charge session completed mid-shift',
+    'Charging session interrupted, resumed after reconnect',
+    'Standard charge cycle, plugged in at returned slot',
+  ],
+  Overheat: [
+    'Cell temperature exceeded 50°C during fast charging, auto-isolated',
+    'Thermal sensor flagged sustained heat during midday field use',
+    'Temperature spike detected after consecutive fast-charge cycles',
+    'Battery casing overheated under direct sun exposure, cooling triggered',
+  ],
+  Fault: [
+    'Battery management system reported cell imbalance fault',
+    'Charger communication fault — charging halted automatically',
+    'Voltage irregularity detected, battery flagged for inspection',
+    'BMS error code E-12 raised, battery isolated from grid',
+  ],
+  Collision: [
+    'Impact sensor triggered — minor collision detected during transit',
+    'Sudden deceleration event recorded, possible collision or hard fall',
+    'Vehicle collision reported by rider, battery casing inspected for damage',
+    'Impact detected at low speed, no structural damage found on inspection',
+  ],
+};
+
+const EVENT_SEVERITY = { Charging: 'Info', Overheat: 'High', Fault: 'High', Collision: 'Medium' };
+
+// Weighted so charging events are common, fault/overheat/collision are rarer
+const EVENT_WEIGHTS = [
+  { type: 'Charging', weight: 70 },
+  { type: 'Overheat', weight: 12 },
+  { type: 'Fault', weight: 10 },
+  { type: 'Collision', weight: 8 },
+];
+
+function pickWeightedEvent() {
+  const total = EVENT_WEIGHTS.reduce((s, e) => s + e.weight, 0);
+  let r = Math.random() * total;
+  for (const e of EVENT_WEIGHTS) {
+    if (r < e.weight) return e.type;
+    r -= e.weight;
+  }
+  return 'Charging';
+}
+
+function generateBatteryHistory(batteries) {
+  const history = [];
+  let evId = 1;
+  const now = new Date();
+
+  batteries.forEach(battery => {
+    // Make sure batteries with known issues have a matching event in their history
+    const forcedEvents = [];
+    if (battery.chargingStatus === 'Isolated' || battery.statusTag === 'Isolated') forcedEvents.push('Overheat');
+    if (battery.chargingStatus === 'Fault' || battery.statusTag === 'Blocked') forcedEvents.push('Fault');
+
+    const eventCount = battery.isSpare ? randomInt(1, 3) : randomInt(2, 8);
+    const events = [...forcedEvents];
+    while (events.length < eventCount) events.push(pickWeightedEvent());
+
+    events.forEach((type, idx) => {
+      const daysAgo = randomInt(0, 21);
+      const t = new Date(now);
+      t.setDate(t.getDate() - daysAgo);
+      t.setHours(randomInt(0, 23), randomInt(0, 59), 0, 0);
+
+      const descArr = EVENT_DESCRIPTIONS[type];
+      const description = descArr[randomInt(0, descArr.length - 1)];
+
+      let detail = {};
+      if (type === 'Charging') {
+        detail = {
+          chargerType: Math.random() > 0.7 ? 'Fast' : 'Normal',
+          startSoc: randomInt(10, 40),
+          endSoc: randomInt(80, 100),
+          durationMin: randomInt(45, 240),
+        };
+      } else if (type === 'Overheat') {
+        detail = { peakTemp: randomInt(51, 64), autoIsolated: true };
+      } else if (type === 'Fault') {
+        detail = { faultCode: `E-${randomInt(1, 30)}`, resolved: Math.random() > 0.3 };
+      } else if (type === 'Collision') {
+        detail = { impactForce: ['Low', 'Medium', 'High'][randomInt(0, 2)], inspectionRequired: Math.random() > 0.4 };
+      }
+
+      history.push({
+        id: `EVT-${String(evId).padStart(4, '0')}`,
+        batteryId: battery.id,
+        vehicleId: battery.vehicleId,
+        type,
+        severity: EVENT_SEVERITY[type],
+        time: t.toISOString(),
+        description,
+        ...detail,
+      });
+      evId++;
+    });
+  });
+
+  return history.sort((a, b) => new Date(b.time) - new Date(a.time));
+}
+
+// ── LIVE LOCATION (Urban Hanoi) ─────────────────────────────────────────────────
+// Bounding box roughly covering Hanoi's urban core (Ba Dinh, Hoan Kiem, Dong Da,
+// Hai Ba Trung, Cau Giay, Tay Ho, Thanh Xuan districts).
+const HANOI_URBAN_BOUNDS = { minLat: 20.99, maxLat: 21.07, minLng: 105.78, maxLng: 105.87 };
+
+// A handful of named landmarks/areas to make locations feel realistic
+const HANOI_AREAS = [
+  { name: 'Hoan Kiem Lake area', lat: 21.0285, lng: 105.8542 },
+  { name: 'Ba Dinh District', lat: 21.0359, lng: 105.8175 },
+  { name: 'Dong Da District', lat: 21.0151, lng: 105.8262 },
+  { name: 'Hai Ba Trung District', lat: 21.0066, lng: 105.8550 },
+  { name: 'Cau Giay District', lat: 21.0359, lng: 105.7910 },
+  { name: 'Tay Ho District', lat: 21.0687, lng: 105.8228 },
+  { name: 'Thanh Xuan District', lat: 20.9956, lng: 105.8052 },
+  { name: 'Long Bien Bridge area', lat: 21.0445, lng: 105.8590 },
+  { name: 'My Dinh area', lat: 21.0190, lng: 105.7670 },
+  { name: 'Royal City area', lat: 21.0029, lng: 105.8157 },
+];
+
+function randomHanoiPoint() {
+  // Bias toward a named area for realism, with small jitter
+  const area = HANOI_AREAS[randomInt(0, HANOI_AREAS.length - 1)];
+  const jitterLat = randomBetween(-0.012, 0.012);
+  const jitterLng = randomBetween(-0.012, 0.012);
+  let lat = area.lat + jitterLat;
+  let lng = area.lng + jitterLng;
+  // Clamp to urban bounds just in case jitter pushes it out
+  lat = Math.min(HANOI_URBAN_BOUNDS.maxLat, Math.max(HANOI_URBAN_BOUNDS.minLat, lat));
+  lng = Math.min(HANOI_URBAN_BOUNDS.maxLng, Math.max(HANOI_URBAN_BOUNDS.minLng, lng));
+  return { lat: Math.round(lat * 10000) / 10000, lng: Math.round(lng * 10000) / 10000, area: area.name };
+}
+
+function generateVehicleLocations(vehicles) {
+  const locations = {};
+  vehicles.forEach(v => {
+    const point = randomHanoiPoint();
+    locations[v.id] = {
+      vehicleId: v.id,
+      lat: point.lat,
+      lng: point.lng,
+      area: point.area,
+      speedKmh: v.location === 'In Field' ? randomInt(0, 38) : 0,
+      heading: randomInt(0, 359),
+      lastUpdate: new Date().toISOString(),
+      accuracy: randomInt(4, 18), // meters
+    };
+  });
+  return locations;
+}
+
 function generateChargingSlots(batteries) {
   const slots = [];
   const chargingBatteries = batteries.filter(b => b.chargingStatus === 'Charging');
@@ -375,6 +533,8 @@ export function generateInitialData() {
   const vehicles = generateVehicles(batteries);
   const incidents = generateIncidents(vehicles);
   const chargingSlots = generateChargingSlots(batteries);
+  const batteryHistory = generateBatteryHistory(batteries);
+  const vehicleLocations = generateVehicleLocations(vehicles);
 
   // Calculate initial power load - target 35-45 kW
   const chargingBatteries = batteries.filter(b => b.chargingStatus === 'Charging');
@@ -390,6 +550,8 @@ export function generateInitialData() {
     vehicles,
     incidents,
     chargingSlots,
+    batteryHistory,
+    vehicleLocations,
     powerLoad,
     normalChargerCount: normalCount,
     fastChargerCount: fastCount,
@@ -398,4 +560,4 @@ export function generateInitialData() {
   };
 }
 
-export { INCIDENT_TYPES, SEVERITIES, AUTO_TAGS };
+export { INCIDENT_TYPES, SEVERITIES, AUTO_TAGS, BATTERY_EVENT_TYPES, HANOI_URBAN_BOUNDS, HANOI_AREAS };

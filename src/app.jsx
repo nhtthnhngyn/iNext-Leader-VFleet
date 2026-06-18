@@ -6,13 +6,14 @@ import {
   ChevronDown, ChevronUp, Filter, RefreshCw, Bell,
   MapPin, Settings, TrendingUp, AlertCircle, Info,
   Navigation, Home, Warehouse, Radio, BatteryCharging,
-  Car, ClipboardList, PhoneCall, Star, WifiOff, Siren
+  Car, ClipboardList, PhoneCall, Star, WifiOff, Siren,
+  History, Map, Crosshair, ShieldAlert, Flame
 } from 'lucide-react';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, LineChart, Line, PieChart, Pie, Cell, Legend
 } from 'recharts';
-import { generateInitialData, INCIDENT_TYPES, SEVERITIES, AUTO_TAGS } from './data.js';
+import { generateInitialData, INCIDENT_TYPES, SEVERITIES, AUTO_TAGS, HANOI_URBAN_BOUNDS } from './data.js';
 
 // ── CONSTANTS ──────────────────────────────────────────────────────────────────
 const OPERATOR_ACCOUNTS = {
@@ -54,6 +55,8 @@ const EMERGENCY_CONTACTS = [
 
 const NAV_ITEMS = [
   { id: 'battery',  icon: Battery,    label: 'Battery Status',    roles: ['admin'] },
+  { id: 'battery-history', icon: History, label: 'Battery History', roles: ['admin'] },
+  { id: 'location', icon: Map,        label: 'Live Location',     roles: ['admin'] },
   { id: 'power',    icon: Zap,        label: 'Power Load',        roles: ['admin'] },
   { id: 'vehicles', icon: Truck,      label: 'Vehicle Dashboard', roles: ['admin'] },
   { id: 'drivers',  icon: Users,      label: 'Driver Contact',    roles: ['admin'] },
@@ -65,6 +68,8 @@ const NAV_ITEMS = [
 const DRIVER_NAV = [
   { id: 'driver-home',      icon: Home,          label: 'My Dashboard' },
   { id: 'driver-battery',   icon: BatteryCharging, label: 'Battery Status' },
+  { id: 'driver-battery-history', icon: History, label: 'Battery History' },
+  { id: 'driver-location',  icon: Map,           label: 'My Location' },
   { id: 'driver-warehouse', icon: Warehouse,     label: 'Warehouse / Slots' },
   { id: 'driver-incident',  icon: ClipboardList, label: 'Report Incident' },
   { id: 'driver-emergency', icon: Radio,         label: 'Emergency / SOS' },
@@ -86,6 +91,8 @@ function TempColor(t) { if (t > 50) return C.red; if (t >= 45) return C.amber; r
 function StatusTagColor(tag) { if (tag === 'Isolated' || tag === 'Blocked') return C.red; if (tag === 'Warning') return C.amber; if (tag === 'Fault') return C.red; return C.green; }
 function SeverityColor(s) { if (s === 'High') return C.red; if (s === 'Medium') return C.amber; return C.green; }
 function ResolutionColor(r) { if (r === 'Resolved') return C.green; if (r === 'In Progress') return C.blue; return C.amber; }
+function EventTypeColor(type) { if (type === 'Overheat') return C.red; if (type === 'Fault') return C.red; if (type === 'Collision') return C.amber; return C.green; }
+function EventTypeIcon(type) { if (type === 'Overheat') return Flame; if (type === 'Fault') return ShieldAlert; if (type === 'Collision') return AlertTriangle; return BatteryCharging; }
 
 // km range estimate from SoC (assume 80 km full charge)
 function kmFromSoc(soc) { return Math.round((soc / 100) * 80); }
@@ -293,6 +300,244 @@ function BatteryModule({ batteries, role }) {
             style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 6, padding: '4px 12px', color: C.text, fontSize: 12, cursor: 'pointer' }}>Next →</button>
         </div>
       )}
+    </div>
+  );
+}
+
+// ── MODULE: BATTERY HISTORY ─────────────────────────────────────────────────────
+function BatteryHistoryModule({ batteryHistory, batteries }) {
+  const [filter, setFilter] = useState('All');
+  const [search, setSearch] = useState('');
+  const [page, setPage] = useState(0);
+  const PAGE_SIZE = 25;
+  const filters = ['All', 'Charging', 'Overheat', 'Fault', 'Collision'];
+
+  const filtered = batteryHistory.filter(ev => {
+    const matchSearch = !search ||
+      ev.batteryId.includes(search.toUpperCase()) ||
+      (ev.vehicleId && ev.vehicleId.includes(search.toUpperCase()));
+    if (!matchSearch) return false;
+    if (filter === 'All') return true;
+    return ev.type === filter;
+  });
+  const paged = filtered.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+
+  const counts = {
+    Charging: batteryHistory.filter(e => e.type === 'Charging').length,
+    Overheat: batteryHistory.filter(e => e.type === 'Overheat').length,
+    Fault: batteryHistory.filter(e => e.type === 'Fault').length,
+    Collision: batteryHistory.filter(e => e.type === 'Collision').length,
+  };
+
+  return (
+    <div>
+      <SectionTitle icon={History} title="Battery History Log"
+        subtitle={`${batteryHistory.length} total events across ${batteries.length} batteries`} />
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 16 }}>
+        {[
+          { label: 'Charging Sessions', value: counts.Charging, color: C.green, icon: BatteryCharging },
+          { label: 'Overheat Events', value: counts.Overheat, color: C.red, icon: Flame },
+          { label: 'Faults', value: counts.Fault, color: C.red, icon: ShieldAlert },
+          { label: 'Collisions', value: counts.Collision, color: C.amber, icon: AlertTriangle },
+        ].map(s => (
+          <Card key={s.label} style={{ padding: 12 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+              <s.icon size={13} color={s.color} />
+              <div style={{ fontSize: 11, color: C.textMuted }}>{s.label}</div>
+            </div>
+            <div style={{ fontSize: 24, fontWeight: 700, color: s.color }}>{s.value}</div>
+          </Card>
+        ))}
+      </div>
+
+      <div style={{ display: 'flex', gap: 8, marginBottom: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+        <input value={search} onChange={e => { setSearch(e.target.value); setPage(0); }}
+          placeholder="Search BAT-ID or VH-ID..."
+          style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 6,
+            padding: '6px 12px', color: C.text, fontSize: 12, outline: 'none', width: 200, fontFamily: 'monospace' }} />
+        <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+          {filters.map(f => (
+            <button key={f} onClick={() => { setFilter(f); setPage(0); }}
+              style={{ background: filter === f ? C.blue : C.surface, color: filter === f ? '#fff' : C.textMuted,
+                border: `1px solid ${filter === f ? C.blue : C.border}`, borderRadius: 6, padding: '4px 10px', fontSize: 11, cursor: 'pointer' }}>
+              {f}
+            </button>
+          ))}
+        </div>
+        <span style={{ fontSize: 11, color: C.textMuted, marginLeft: 'auto' }}>{filtered.length} results</span>
+      </div>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {paged.length === 0 && (
+          <Card><div style={{ color: C.textMuted, fontSize: 12, textAlign: 'center', padding: 12 }}>No events match this filter.</div></Card>
+        )}
+        {paged.map(ev => {
+          const Icon = EventTypeIcon(ev.type);
+          const color = EventTypeColor(ev.type);
+          return (
+            <Card key={ev.id} style={{ padding: 12, border: `1px solid ${color}33` }}>
+              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+                <div style={{ width: 30, height: 30, borderRadius: 7, background: `${color}1a`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                  <Icon size={15} color={color} />
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                    <Badge color={color} small>{ev.type}</Badge>
+                    <span style={{ color: C.blue, fontFamily: 'monospace', fontSize: 12, fontWeight: 600 }}>{ev.batteryId}</span>
+                    {ev.vehicleId && <span style={{ color: C.textMuted, fontFamily: 'monospace', fontSize: 11 }}>· {ev.vehicleId}</span>}
+                    <span style={{ marginLeft: 'auto', color: C.textMuted, fontSize: 11, fontFamily: 'monospace' }}>{fmtDateTime(ev.time)}</span>
+                  </div>
+                  <div style={{ fontSize: 12, color: C.text, marginTop: 4 }}>{ev.description}</div>
+                  <div style={{ display: 'flex', gap: 12, marginTop: 6, fontSize: 11, color: C.textMuted, flexWrap: 'wrap' }}>
+                    {ev.type === 'Charging' && (
+                      <>
+                        <span>Charger: <span style={{ color: C.text }}>{ev.chargerType}</span></span>
+                        <span>SoC: <span style={{ color: C.text }}>{ev.startSoc}% → {ev.endSoc}%</span></span>
+                        <span>Duration: <span style={{ color: C.text }}>{ev.durationMin} min</span></span>
+                      </>
+                    )}
+                    {ev.type === 'Overheat' && (
+                      <>
+                        <span>Peak Temp: <span style={{ color: C.red }}>{ev.peakTemp}°C</span></span>
+                        <span>Auto-isolated: <span style={{ color: C.text }}>{ev.autoIsolated ? 'Yes' : 'No'}</span></span>
+                      </>
+                    )}
+                    {ev.type === 'Fault' && (
+                      <>
+                        <span>Fault Code: <span style={{ color: C.text, fontFamily: 'monospace' }}>{ev.faultCode}</span></span>
+                        <span>Resolved: <span style={{ color: ev.resolved ? C.green : C.amber }}>{ev.resolved ? 'Yes' : 'Pending'}</span></span>
+                      </>
+                    )}
+                    {ev.type === 'Collision' && (
+                      <>
+                        <span>Impact: <Badge color={ev.impactForce === 'High' ? C.red : ev.impactForce === 'Medium' ? C.amber : C.green} small>{ev.impactForce}</Badge></span>
+                        <span>Inspection: <span style={{ color: ev.inspectionRequired ? C.amber : C.green }}>{ev.inspectionRequired ? 'Required' : 'Not needed'}</span></span>
+                      </>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </Card>
+          );
+        })}
+      </div>
+
+      {totalPages > 1 && (
+        <div style={{ display: 'flex', gap: 8, marginTop: 12, justifyContent: 'center' }}>
+          <button onClick={() => setPage(p => Math.max(0, p - 1))} disabled={page === 0}
+            style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 6, padding: '4px 12px', color: C.text, fontSize: 12, cursor: 'pointer' }}>← Prev</button>
+          <span style={{ fontSize: 12, color: C.textMuted, alignSelf: 'center' }}>{page + 1} / {totalPages}</span>
+          <button onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))} disabled={page === totalPages - 1}
+            style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 6, padding: '4px 12px', color: C.text, fontSize: 12, cursor: 'pointer' }}>Next →</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── MODULE: LIVE LOCATION (Hanoi map) ────────────────────────────────────────────
+function HanoiMapSvg({ points, selectedId, onSelect, height = 380 }) {
+  const { minLat, maxLat, minLng, maxLng } = HANOI_URBAN_BOUNDS;
+  const W = 700, H = height;
+  const project = (lat, lng) => {
+    const x = ((lng - minLng) / (maxLng - minLng)) * (W - 40) + 20;
+    const y = (1 - (lat - minLat) / (maxLat - minLat)) * (H - 40) + 20;
+    return { x, y };
+  };
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} style={{ width: '100%', height, background: '#0c1018', borderRadius: 8 }}>
+      {/* grid */}
+      {Array.from({ length: 9 }).map((_, i) => (
+        <line key={`v${i}`} x1={20 + i * (W - 40) / 8} y1={20} x2={20 + i * (W - 40) / 8} y2={H - 20} stroke={C.border} strokeWidth="1" opacity="0.4" />
+      ))}
+      {Array.from({ length: 6 }).map((_, i) => (
+        <line key={`h${i}`} x1={20} y1={20 + i * (H - 40) / 5} x2={W - 20} y2={20 + i * (H - 40) / 5} stroke={C.border} strokeWidth="1" opacity="0.4" />
+      ))}
+      <rect x="20" y="20" width={W - 40} height={H - 40} fill="none" stroke={C.blue} strokeWidth="1.5" opacity="0.5" rx="6" />
+      <text x={W / 2} y="14" textAnchor="middle" fontSize="11" fill={C.textMuted} fontFamily="monospace">HANOI URBAN ZONE</text>
+      {points.map(p => {
+        const { x, y } = project(p.lat, p.lng);
+        const selected = selectedId === p.vehicleId;
+        const color = p.speedKmh > 0 ? C.green : C.textMuted;
+        return (
+          <g key={p.vehicleId} onClick={() => onSelect && onSelect(p.vehicleId)} style={{ cursor: 'pointer' }}>
+            {selected && <circle cx={x} cy={y} r="9" fill="none" stroke={C.blue} strokeWidth="2" />}
+            <circle cx={x} cy={y} r={selected ? 5 : 3.5} fill={color} opacity={selected ? 1 : 0.85} />
+          </g>
+        );
+      })}
+    </svg>
+  );
+}
+
+function LocationModule({ vehicleLocations, vehicles }) {
+  const [search, setSearch] = useState('');
+  const [selectedId, setSelectedId] = useState(null);
+  const points = Object.values(vehicleLocations);
+  const moving = points.filter(p => p.speedKmh > 0).length;
+
+  const filtered = points.filter(p => !search || p.vehicleId.includes(search.toUpperCase()) || p.area.toLowerCase().includes(search.toLowerCase()));
+  const selected = selectedId ? vehicleLocations[selectedId] : null;
+  const selectedVehicle = selectedId ? vehicles.find(v => v.id === selectedId) : null;
+
+  return (
+    <div>
+      <SectionTitle icon={Map} title="Live Driver Location" subtitle={`${points.length} vehicles tracked · Urban Hanoi · ${moving} currently moving`} />
+
+      <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 16 }}>
+        <div>
+          <HanoiMapSvg points={filtered} selectedId={selectedId} onSelect={setSelectedId} />
+          <div style={{ display: 'flex', gap: 14, marginTop: 8, fontSize: 11, color: C.textMuted, alignItems: 'center' }}>
+            <span style={{ display: 'flex', alignItems: 'center', gap: 5 }}><span style={{ width: 8, height: 8, borderRadius: '50%', background: C.green, display: 'inline-block' }} /> Moving</span>
+            <span style={{ display: 'flex', alignItems: 'center', gap: 5 }}><span style={{ width: 8, height: 8, borderRadius: '50%', background: C.textMuted, display: 'inline-block' }} /> Stationary</span>
+            <span style={{ marginLeft: 'auto' }}>Click a marker for details</span>
+          </div>
+        </div>
+
+        <div>
+          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search vehicle or area..."
+            style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 6, padding: '6px 12px', color: C.text, fontSize: 12, outline: 'none', width: '100%', marginBottom: 10, boxSizing: 'border-box' }} />
+
+          {selected ? (
+            <Card style={{ marginBottom: 10, border: `1px solid ${C.blue}44` }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                <Crosshair size={14} color={C.blue} />
+                <span style={{ color: C.blue, fontFamily: 'monospace', fontWeight: 700, fontSize: 13 }}>{selected.vehicleId}</span>
+              </div>
+              {selectedVehicle && <div style={{ fontSize: 12, color: C.textBright, marginBottom: 6 }}>{selectedVehicle.riderName}</div>}
+              <div style={{ fontSize: 11, color: C.textMuted, marginBottom: 2 }}>Area</div>
+              <div style={{ fontSize: 12, color: C.text, marginBottom: 6 }}>📍 {selected.area}</div>
+              <div style={{ display: 'flex', gap: 12, fontSize: 11, color: C.textMuted, flexWrap: 'wrap' }}>
+                <span>Lat: <span style={{ color: C.text, fontFamily: 'monospace' }}>{selected.lat}</span></span>
+                <span>Lng: <span style={{ color: C.text, fontFamily: 'monospace' }}>{selected.lng}</span></span>
+              </div>
+              <div style={{ display: 'flex', gap: 12, fontSize: 11, color: C.textMuted, marginTop: 6, flexWrap: 'wrap' }}>
+                <span>Speed: <span style={{ color: selected.speedKmh > 0 ? C.green : C.textMuted }}>{selected.speedKmh} km/h</span></span>
+                <span>Accuracy: <span style={{ color: C.text }}>±{selected.accuracy}m</span></span>
+              </div>
+              <div style={{ fontSize: 11, color: C.textMuted, marginTop: 6 }}>Updated {fmtTime(selected.lastUpdate)}</div>
+            </Card>
+          ) : (
+            <Card style={{ marginBottom: 10 }}>
+              <div style={{ fontSize: 12, color: C.textMuted, textAlign: 'center', padding: 8 }}>Select a vehicle marker or row to view details</div>
+            </Card>
+          )}
+
+          <div style={{ maxHeight: 250, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {filtered.map(p => (
+              <div key={p.vehicleId} onClick={() => setSelectedId(p.vehicleId)}
+                style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px', borderRadius: 6, cursor: 'pointer',
+                  background: selectedId === p.vehicleId ? `${C.blue}1a` : C.surface, border: `1px solid ${selectedId === p.vehicleId ? C.blue : C.border}33` }}>
+                <span style={{ width: 7, height: 7, borderRadius: '50%', background: p.speedKmh > 0 ? C.green : C.textMuted, flexShrink: 0 }} />
+                <span style={{ color: C.blue, fontFamily: 'monospace', fontSize: 11, fontWeight: 600 }}>{p.vehicleId}</span>
+                <span style={{ color: C.textMuted, fontSize: 11, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.area}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -1394,6 +1639,130 @@ function LoginScreen({ onLogin }) {
   );
 }
 
+// ── DRIVER: BATTERY HISTORY ────────────────────────────────────────────────────
+function DriverBatteryHistoryModule({ vehicle, batteryHistory }) {
+  if (!vehicle) return <div style={{ color: C.textMuted }}>No vehicle data.</div>;
+  const myHistory = (batteryHistory || []).filter(ev => ev.vehicleId === vehicle.id);
+  const counts = {
+    Charging: myHistory.filter(e => e.type === 'Charging').length,
+    Overheat: myHistory.filter(e => e.type === 'Overheat').length,
+    Fault: myHistory.filter(e => e.type === 'Fault').length,
+    Collision: myHistory.filter(e => e.type === 'Collision').length,
+  };
+  return (
+    <div>
+      <SectionTitle icon={History} title="My Battery History" subtitle={`${myHistory.length} events for ${vehicle.id}`} />
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 16 }}>
+        {[
+          { label: 'Charging Sessions', value: counts.Charging, color: C.green, icon: BatteryCharging },
+          { label: 'Overheat Events', value: counts.Overheat, color: C.red, icon: Flame },
+          { label: 'Faults', value: counts.Fault, color: C.red, icon: ShieldAlert },
+          { label: 'Collisions', value: counts.Collision, color: C.amber, icon: AlertTriangle },
+        ].map(s => (
+          <Card key={s.label} style={{ padding: 12 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+              <s.icon size={13} color={s.color} />
+              <div style={{ fontSize: 11, color: C.textMuted }}>{s.label}</div>
+            </div>
+            <div style={{ fontSize: 24, fontWeight: 700, color: s.color }}>{s.value}</div>
+          </Card>
+        ))}
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {myHistory.length === 0 && (
+          <Card><div style={{ color: C.textMuted, fontSize: 12, textAlign: 'center', padding: 12 }}>No history events for your vehicle yet.</div></Card>
+        )}
+        {myHistory.map(ev => {
+          const Icon = EventTypeIcon(ev.type);
+          const color = EventTypeColor(ev.type);
+          return (
+            <Card key={ev.id} style={{ padding: 12, border: `1px solid ${color}33` }}>
+              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+                <div style={{ width: 30, height: 30, borderRadius: 7, background: `${color}1a`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                  <Icon size={15} color={color} />
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                    <Badge color={color} small>{ev.type}</Badge>
+                    <span style={{ color: C.blue, fontFamily: 'monospace', fontSize: 12, fontWeight: 600 }}>{ev.batteryId}</span>
+                    <span style={{ marginLeft: 'auto', color: C.textMuted, fontSize: 11, fontFamily: 'monospace' }}>{fmtDateTime(ev.time)}</span>
+                  </div>
+                  <div style={{ fontSize: 12, color: C.text, marginTop: 4 }}>{ev.description}</div>
+                  <div style={{ display: 'flex', gap: 12, marginTop: 6, fontSize: 11, color: C.textMuted, flexWrap: 'wrap' }}>
+                    {ev.type === 'Charging' && (
+                      <><span>Charger: <span style={{ color: C.text }}>{ev.chargerType}</span></span>
+                      <span>SoC: <span style={{ color: C.text }}>{ev.startSoc}% → {ev.endSoc}%</span></span>
+                      <span>Duration: <span style={{ color: C.text }}>{ev.durationMin} min</span></span></>
+                    )}
+                    {ev.type === 'Overheat' && (
+                      <><span>Peak Temp: <span style={{ color: C.red }}>{ev.peakTemp}°C</span></span>
+                      <span>Auto-isolated: <span style={{ color: C.text }}>{ev.autoIsolated ? 'Yes' : 'No'}</span></span></>
+                    )}
+                    {ev.type === 'Fault' && (
+                      <><span>Fault Code: <span style={{ color: C.text, fontFamily: 'monospace' }}>{ev.faultCode}</span></span>
+                      <span>Resolved: <span style={{ color: ev.resolved ? C.green : C.amber }}>{ev.resolved ? 'Yes' : 'Pending'}</span></span></>
+                    )}
+                    {ev.type === 'Collision' && (
+                      <><span>Impact: <Badge color={ev.impactForce === 'High' ? C.red : ev.impactForce === 'Medium' ? C.amber : C.green} small>{ev.impactForce}</Badge></span>
+                      <span>Inspection: <span style={{ color: ev.inspectionRequired ? C.amber : C.green }}>{ev.inspectionRequired ? 'Required' : 'Not needed'}</span></span></>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </Card>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ── DRIVER: MY LOCATION ────────────────────────────────────────────────────────
+function DriverLocationModule({ vehicle, vehicleLocations }) {
+  if (!vehicle) return <div style={{ color: C.textMuted }}>No vehicle data.</div>;
+  const loc = vehicleLocations ? vehicleLocations[vehicle.id] : null;
+  return (
+    <div>
+      <SectionTitle icon={Map} title="My Location" subtitle={`Live GPS — ${vehicle.id}`} />
+      <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 16 }}>
+        <div>
+          <HanoiMapSvg
+            points={loc ? [loc] : []}
+            selectedId={vehicle.id}
+            onSelect={() => {}}
+          />
+          <div style={{ fontSize: 11, color: C.textMuted, marginTop: 6 }}>
+            Your position is shown on the Hanoi Urban Zone map.
+          </div>
+        </div>
+        <div>
+          {loc ? (
+            <Card style={{ border: `1px solid ${C.blue}44` }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                <Crosshair size={14} color={C.blue} />
+                <span style={{ color: C.blue, fontFamily: 'monospace', fontWeight: 700, fontSize: 13 }}>{vehicle.id}</span>
+              </div>
+              <div style={{ fontSize: 11, color: C.textMuted, marginBottom: 2 }}>Area</div>
+              <div style={{ fontSize: 12, color: C.text, marginBottom: 8 }}>📍 {loc.area}</div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 11 }}>
+                <div style={{ color: C.textMuted }}>Lat: <span style={{ color: C.text, fontFamily: 'monospace' }}>{loc.lat.toFixed(5)}</span></div>
+                <div style={{ color: C.textMuted }}>Lng: <span style={{ color: C.text, fontFamily: 'monospace' }}>{loc.lng.toFixed(5)}</span></div>
+                <div style={{ color: C.textMuted }}>Speed: <span style={{ color: loc.speedKmh > 0 ? C.green : C.textMuted }}>{loc.speedKmh} km/h</span></div>
+                <div style={{ color: C.textMuted }}>Accuracy: <span style={{ color: C.text }}>±{loc.accuracy}m</span></div>
+                <div style={{ color: C.textMuted }}>Updated: <span style={{ color: C.text }}>{fmtTime(loc.lastUpdate)}</span></div>
+              </div>
+            </Card>
+          ) : (
+            <Card>
+              <div style={{ fontSize: 12, color: C.textMuted, textAlign: 'center', padding: 8 }}>Location not available</div>
+            </Card>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ══════════════════════════════════════════════════════════════════════════════
 // ── DRIVER APP SHELL ──────────────────────────────────────────────────────────
 // ══════════════════════════════════════════════════════════════════════════════
@@ -1481,12 +1850,14 @@ function DriverApp({ session, setSession, data, setData }) {
 
         {/* Main content */}
         <div style={{ flex: 1, overflowY: 'auto', padding: 20 }}>
-          {activeModule === 'driver-home' && <DriverHomeModule vehicle={vehicle} battery={battery} incidents={data.incidents} addToast={addToast} />}
-          {activeModule === 'driver-battery' && <DriverBatteryModule vehicle={vehicle} battery={battery} />}
-          {activeModule === 'driver-warehouse' && <DriverWarehouseModule addToast={addToast} />}
-          {activeModule === 'driver-incident' && <DriverIncidentModule vehicle={vehicle} incidents={data.incidents} setIncidents={setIncidents} addToast={addToast} />}
-          {activeModule === 'driver-emergency' && <DriverEmergencyModule vehicle={vehicle} setIncidents={setIncidents} incidents={data.incidents} addToast={addToast} />}
-          {activeModule === 'driver-contacts' && <DriverContactsModule />}
+          {activeModule === 'driver-home'            && <DriverHomeModule vehicle={vehicle} battery={battery} incidents={data.incidents} addToast={addToast} />}
+          {activeModule === 'driver-battery'         && <DriverBatteryModule vehicle={vehicle} battery={battery} />}
+          {activeModule === 'driver-battery-history' && <DriverBatteryHistoryModule vehicle={vehicle} batteryHistory={data.batteryHistory} />}
+          {activeModule === 'driver-location'        && <DriverLocationModule vehicle={vehicle} vehicleLocations={data.vehicleLocations} />}
+          {activeModule === 'driver-warehouse'       && <DriverWarehouseModule addToast={addToast} />}
+          {activeModule === 'driver-incident'        && <DriverIncidentModule vehicle={vehicle} incidents={data.incidents} setIncidents={setIncidents} addToast={addToast} />}
+          {activeModule === 'driver-emergency'       && <DriverEmergencyModule vehicle={vehicle} setIncidents={setIncidents} incidents={data.incidents} addToast={addToast} />}
+          {activeModule === 'driver-contacts'        && <DriverContactsModule />}
         </div>
       </div>
       <Toast toasts={data.toasts} />
@@ -1567,13 +1938,15 @@ function OperatorApp({ session, setSession, data, setData }) {
           </div>
         )}
         <div style={{ flex: 1, overflowY: 'auto', padding: 20 }}>
-          {activeModule === 'battery'   && <BatteryModule batteries={data.batteries} role={role} />}
-          {activeModule === 'power'     && <PowerModule batteries={data.batteries} powerLoad={data.powerLoad} normalCount={data.normalChargerCount} fastCount={data.fastChargerCount} />}
-          {activeModule === 'vehicles'  && <VehicleModule vehicles={data.vehicles} setVehicles={setVehicles} role={role} />}
-          {activeModule === 'drivers'   && <DriversModule vehicles={data.vehicles} setVehicles={setVehicles} incidents={data.incidents} addToast={addToast} />}
-          {activeModule === 'incidents' && <IncidentModule incidents={data.incidents} setIncidents={setIncidents} vehicles={data.vehicles} role={role} addToast={addToast} />}
-          {activeModule === 'charging'  && role === 'admin' && <ChargingModule chargingSlots={data.chargingSlots} setChargingSlots={setChargingSlots} batteries={data.batteries} addToast={addToast} />}
-          {activeModule === 'kpi'       && role === 'admin' && <KPIModule batteries={data.batteries} vehicles={data.vehicles} incidents={data.incidents} />}
+          {activeModule === 'battery'         && <BatteryModule batteries={data.batteries} role={role} />}
+          {activeModule === 'battery-history' && <BatteryHistoryModule batteryHistory={data.batteryHistory} batteries={data.batteries} />}
+          {activeModule === 'location'        && <LocationModule vehicleLocations={data.vehicleLocations} vehicles={data.vehicles} />}
+          {activeModule === 'power'           && <PowerModule batteries={data.batteries} powerLoad={data.powerLoad} normalCount={data.normalChargerCount} fastCount={data.fastChargerCount} />}
+          {activeModule === 'vehicles'        && <VehicleModule vehicles={data.vehicles} setVehicles={setVehicles} role={role} />}
+          {activeModule === 'drivers'         && <DriversModule vehicles={data.vehicles} setVehicles={setVehicles} incidents={data.incidents} addToast={addToast} />}
+          {activeModule === 'incidents'       && <IncidentModule incidents={data.incidents} setIncidents={setIncidents} vehicles={data.vehicles} role={role} addToast={addToast} />}
+          {activeModule === 'charging'        && role === 'admin' && <ChargingModule chargingSlots={data.chargingSlots} setChargingSlots={setChargingSlots} batteries={data.batteries} addToast={addToast} />}
+          {activeModule === 'kpi'             && role === 'admin' && <KPIModule batteries={data.batteries} vehicles={data.vehicles} incidents={data.incidents} />}
         </div>
       </div>
       <Toast toasts={data.toasts} />
