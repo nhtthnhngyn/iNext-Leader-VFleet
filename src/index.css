@@ -159,3 +159,114 @@ body {
   padding: 4px 7px;
   pointer-events: none;
 }
+
+.vfleet-location-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(300px, 1fr);
+  gap: 16px;
+}
+
+.vfleet-hub-panel {
+  margin-bottom: 10px;
+}
+
+.vfleet-hub-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 310px;
+  overflow-y: auto;
+}
+
+.vfleet-hub-item {
+  align-items: center;
+  background: rgba(15, 17, 23, 0.6);
+  border: 1px solid rgba(30, 41, 64, 0.75);
+  border-radius: 7px;
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+  padding: 8px 9px;
+}
+
+.vfleet-hub-dot {
+  border-radius: 999px;
+  display: inline-block;
+  flex-shrink: 0;
+  height: 8px;
+  width: 8px;
+}
+
+.vfleet-hub-dot.warehouse {
+  background: #F4A259;
+  box-shadow: 0 0 8px rgba(244, 162, 89, 0.45);
+}
+
+.vfleet-hub-dot.swap {
+  background: #2EC4B6;
+  box-shadow: 0 0 8px rgba(46, 196, 182, 0.45);
+}
+
+.vfleet-hub-marker,
+.vfleet-driver-marker {
+  border: 2px solid #0F1117;
+  border-radius: 999px;
+  cursor: pointer;
+  display: grid;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  font-weight: 800;
+  height: 100%;
+  padding: 0;
+  place-items: center;
+  width: 100%;
+}
+
+.vfleet-hub-marker span {
+  color: #0F1117;
+  line-height: 1;
+}
+
+.vfleet-hub-marker.warehouse {
+  background: #F4A259;
+  box-shadow: 0 0 0 5px rgba(244, 162, 89, 0.22), 0 0 20px rgba(244, 162, 89, 0.65);
+}
+
+.vfleet-hub-marker.swap {
+  background: #2EC4B6;
+  box-shadow: 0 0 0 4px rgba(46, 196, 182, 0.2), 0 0 16px rgba(46, 196, 182, 0.55);
+}
+
+.vfleet-driver-marker {
+  background: #2D7DD2;
+  box-shadow: 0 0 0 6px rgba(45, 125, 210, 0.22), 0 0 20px rgba(45, 125, 210, 0.75);
+}
+
+.vfleet-driver-marker span {
+  background: #F1F5F9;
+  border-radius: 999px;
+  display: block;
+  height: 8px;
+  width: 8px;
+}
+
+@media (max-width: 980px) {
+  .vfleet-location-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .vfleet-leaflet-map {
+    min-height: 360px;
+  }
+}
+
+@media (max-width: 640px) {
+  .vfleet-hub-item {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .vfleet-hub-item button {
+    width: 100%;
+  }
+}

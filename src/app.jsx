@@ -438,7 +438,136 @@ function BatteryHistoryModule({ batteryHistory, batteries }) {
 }
 
 // ── MODULE: LIVE LOCATION (Hanoi map) ────────────────────────────────────────────
-function HanoiMapSvg({ points, selectedId, onSelect, height = 380 }) {
+const SERVICE_ZONE = {
+  id: 'hoan-kiem-5km',
+  name: '5 km Service Zone',
+  lat: 21.0285,
+  lng: 105.8542,
+  radiusMeters: 5000,
+};
+
+const HUB_NODES = [
+  {
+    id: 'central-warehouse',
+    name: 'Central Warehouse / Night Charging Depot',
+    type: 'Warehouse',
+    area: 'Long Bien / Phuc Xa',
+    role: 'Night gathering point, overnight charging, battery inspection, battery rack, quarantine area, morning dispatch',
+    lat: 21.0419,
+    lng: 105.8547,
+  },
+  { id: 'old-quarter-swap', name: 'Old Quarter Swap Hub', type: 'Swap Hub', area: 'Dong Xuan / Hang Dau', role: 'Daytime battery swap point', lat: 21.0391, lng: 105.8496 },
+  { id: 'opera-house-swap', name: 'Opera House Swap Hub', type: 'Swap Hub', area: 'Trang Tien / Hanoi Opera House', role: 'Daytime battery swap point', lat: 21.0245, lng: 105.8576 },
+  { id: 'ba-dinh-swap', name: 'Ba Dinh Swap Hub', type: 'Swap Hub', area: 'Ba Dinh / Quan Thanh / Mausoleum edge', role: 'Daytime battery swap point', lat: 21.0379, lng: 105.8342 },
+  { id: 'temple-literature-swap', name: 'Temple of Literature Swap Hub', type: 'Swap Hub', area: 'Van Mieu / Quoc Tu Giam / Hanoi Station side', role: 'Daytime battery swap point', lat: 21.0280, lng: 105.8356 },
+  { id: 'truc-bach-swap', name: 'Truc Bach Swap Hub', type: 'Swap Hub', area: 'Truc Bach / Thanh Nien / Quan Thanh', role: 'Daytime battery swap point', lat: 21.0458, lng: 105.8407 },
+];
+
+function distanceKm(a, b) {
+  if (!a || !b) return null;
+  const R = 6371;
+  const dLat = (b.lat - a.lat) * Math.PI / 180;
+  const dLng = (b.lng - a.lng) * Math.PI / 180;
+  const lat1 = a.lat * Math.PI / 180;
+  const lat2 = b.lat * Math.PI / 180;
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
+}
+
+function fmtDistance(km) {
+  if (km == null) return '—';
+  if (km < 1) return `${Math.round(km * 1000)} m`;
+  return `${km.toFixed(1)} km`;
+}
+
+function googleMapsUrl(node, origin) {
+  const destination = `${node.lat},${node.lng}`;
+  if (origin) return `https://www.google.com/maps/dir/?api=1&origin=${origin.lat},${origin.lng}&destination=${destination}`;
+  return `https://www.google.com/maps/dir/?api=1&destination=${destination}`;
+}
+
+function openDirections(node, origin) {
+  window.open(googleMapsUrl(node, origin), '_blank', 'noopener,noreferrer');
+}
+
+function useBrowserLocation() {
+  const [driverLocation, setDriverLocation] = useState(null);
+  const [geoStatus, setGeoStatus] = useState('idle');
+
+  const findDriverLocation = useCallback(() => {
+    if (!navigator.geolocation) {
+      setGeoStatus('unsupported');
+      return;
+    }
+    setGeoStatus('locating');
+    navigator.geolocation.getCurrentPosition(
+      pos => {
+        setDriverLocation({
+          lat: pos.coords.latitude,
+          lng: pos.coords.longitude,
+          accuracy: Math.round(pos.coords.accuracy),
+          lastUpdate: new Date().toISOString(),
+        });
+        setGeoStatus('ready');
+      },
+      () => setGeoStatus('denied'),
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 }
+    );
+  }, []);
+
+  return { driverLocation, geoStatus, findDriverLocation };
+}
+
+function HubListPanel({ driverLocation, geoStatus = 'idle', onFindNearest, compact = false }) {
+  const hubsWithDistance = HUB_NODES.map(hub => ({ ...hub, distance: distanceKm(driverLocation, hub) }));
+  const sortedHubs = driverLocation
+    ? [...hubsWithDistance].sort((a, b) => (a.distance ?? Infinity) - (b.distance ?? Infinity))
+    : hubsWithDistance;
+  const nearest = driverLocation ? sortedHubs[0] : null;
+
+  return (
+    <Card className="vfleet-hub-panel" style={{ padding: compact ? 12 : 14 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 10, marginBottom: 10 }}>
+        <div>
+          <div style={{ fontSize: 13, fontWeight: 700, color: C.textBright }}>Pilot Hubs</div>
+          {nearest && <div style={{ fontSize: 11, color: C.green, marginTop: 2 }}>Nearest: {nearest.name} · {fmtDistance(nearest.distance)}</div>}
+          {!nearest && geoStatus === 'denied' && <div style={{ fontSize: 11, color: C.amber, marginTop: 2 }}>Location denied</div>}
+        </div>
+        {onFindNearest && (
+          <button onClick={onFindNearest}
+            style={{ background: geoStatus === 'locating' ? `${C.amber}22` : `${C.blue}22`, border: `1px solid ${geoStatus === 'locating' ? C.amber : C.blue}55`,
+              color: geoStatus === 'locating' ? C.amber : C.blue, borderRadius: 6, padding: '6px 9px', fontSize: 11, cursor: 'pointer', whiteSpace: 'nowrap' }}>
+            {geoStatus === 'locating' ? 'Locating...' : 'Find nearest hub'}
+          </button>
+        )}
+      </div>
+      <div className="vfleet-hub-list">
+        {sortedHubs.map(hub => (
+          <div key={hub.id} className="vfleet-hub-item">
+            <div style={{ minWidth: 0 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 3 }}>
+                <span className={`vfleet-hub-dot ${hub.type === 'Warehouse' ? 'warehouse' : 'swap'}`} />
+                <span style={{ color: C.textBright, fontSize: 12, fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{hub.name}</span>
+              </div>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', fontSize: 10, color: C.textMuted }}>
+                <span>{hub.type}</span>
+                <span>{hub.area}</span>
+                <span style={{ color: hub.distance == null ? C.textMuted : C.green }}>{fmtDistance(hub.distance)}</span>
+              </div>
+            </div>
+            <button onClick={() => openDirections(hub, driverLocation)}
+              style={{ background: 'transparent', border: `1px solid ${hub.type === 'Warehouse' ? C.amber : C.green}55`,
+                color: hub.type === 'Warehouse' ? C.amber : C.green, borderRadius: 6, padding: '5px 8px', fontSize: 10, cursor: 'pointer', flexShrink: 0 }}>
+              Navigate
+            </button>
+          </div>
+        ))}
+      </div>
+    </Card>
+  );
+}
+
+function HanoiMapSvg({ points, selectedId, onSelect, height = 380, driverLocation = null }) {
   const mapEl = useRef(null);
   const mapRef = useRef(null);
   const markerLayerRef = useRef(null);
@@ -454,7 +583,6 @@ function HanoiMapSvg({ points, selectedId, onSelect, height = 380 }) {
       zoomControl: true,
       attributionControl: true,
       scrollWheelZoom: true,
-      preferCanvas: true,
     });
 
     tileLayerRef.current = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -483,6 +611,56 @@ function HanoiMapSvg({ points, selectedId, onSelect, height = 380 }) {
     if (!L || !map || !layer) return;
 
     layer.clearLayers();
+
+    L.circle([SERVICE_ZONE.lat, SERVICE_ZONE.lng], {
+      radius: SERVICE_ZONE.radiusMeters,
+      color: C.blue,
+      weight: 1.5,
+      opacity: 0.8,
+      fillColor: C.blue,
+      fillOpacity: 0.08,
+      dashArray: '7 7',
+    }).bindTooltip(SERVICE_ZONE.name, {
+      direction: 'top',
+      className: 'vfleet-map-tooltip',
+    }).addTo(layer);
+
+    HUB_NODES.forEach(hub => {
+      const isWarehouse = hub.type === 'Warehouse';
+      const marker = L.marker([hub.lat, hub.lng], {
+        icon: L.divIcon({
+          className: '',
+          html: `<button class="vfleet-hub-marker ${isWarehouse ? 'warehouse' : 'swap'}" aria-label="${hub.name}"><span>${isWarehouse ? 'W' : 'S'}</span></button>`,
+          iconSize: isWarehouse ? [32, 32] : [26, 26],
+          iconAnchor: isWarehouse ? [16, 16] : [13, 13],
+        }),
+        zIndexOffset: isWarehouse ? 900 : 800,
+      });
+
+      marker.bindTooltip(`${hub.name} · ${hub.type}`, {
+        direction: 'top',
+        offset: [0, -12],
+        className: 'vfleet-map-tooltip',
+      });
+      marker.addTo(layer);
+    });
+
+    if (driverLocation) {
+      L.marker([driverLocation.lat, driverLocation.lng], {
+        icon: L.divIcon({
+          className: '',
+          html: '<button class="vfleet-driver-marker" aria-label="Current driver location"><span></span></button>',
+          iconSize: [28, 28],
+          iconAnchor: [14, 14],
+        }),
+        zIndexOffset: 1000,
+      }).bindTooltip('Current driver location', {
+        direction: 'top',
+        offset: [0, -12],
+        className: 'vfleet-map-tooltip',
+      }).addTo(layer);
+    }
+
     points.forEach(p => {
       const selected = selectedId === p.vehicleId;
       const moving = p.speedKmh > 0;
@@ -507,15 +685,21 @@ function HanoiMapSvg({ points, selectedId, onSelect, height = 380 }) {
     if (selectedId && points.some(p => p.vehicleId === selectedId)) {
       const selected = points.find(p => p.vehicleId === selectedId);
       map.setView([selected.lat, selected.lng], Math.max(map.getZoom(), 14), { animate: true });
+    } else if (driverLocation) {
+      map.setView([driverLocation.lat, driverLocation.lng], Math.max(map.getZoom(), 14), { animate: true });
     } else if (points.length === 1) {
       map.setView([points[0].lat, points[0].lng], 14);
     } else if (points.length > 1) {
-      const bounds = L.latLngBounds(points.map(p => [p.lat, p.lng]));
+      const bounds = L.latLngBounds([
+        ...points.map(p => [p.lat, p.lng]),
+        ...HUB_NODES.map(hub => [hub.lat, hub.lng]),
+        [SERVICE_ZONE.lat, SERVICE_ZONE.lng],
+      ]);
       map.fitBounds(bounds, { padding: [24, 24], maxZoom: 14 });
     }
 
     setTimeout(() => map.invalidateSize(), 0);
-  }, [onSelect, points, selectedId]);
+  }, [driverLocation, onSelect, points, selectedId]);
 
   if (typeof window !== 'undefined' && window.L) {
     return (
@@ -531,6 +715,10 @@ function HanoiMapSvg({ points, selectedId, onSelect, height = 380 }) {
     const y = (1 - (lat - minLat) / (maxLat - minLat)) * (H - 40) + 20;
     return { x, y };
   };
+  const serviceCenter = project(SERVICE_ZONE.lat, SERVICE_ZONE.lng);
+  const radiusLng = (SERVICE_ZONE.radiusMeters / 1000) / (111.32 * Math.cos(SERVICE_ZONE.lat * Math.PI / 180));
+  const serviceEdge = project(SERVICE_ZONE.lat, SERVICE_ZONE.lng + radiusLng);
+  const serviceRadius = Math.abs(serviceEdge.x - serviceCenter.x);
   return (
     <svg viewBox={`0 0 ${W} ${H}`} style={{ width: '100%', height, background: '#0c1018', borderRadius: 8 }}>
       {/* grid */}
@@ -542,6 +730,21 @@ function HanoiMapSvg({ points, selectedId, onSelect, height = 380 }) {
       ))}
       <rect x="20" y="20" width={W - 40} height={H - 40} fill="none" stroke={C.blue} strokeWidth="1.5" opacity="0.5" rx="6" />
       <text x={W / 2} y="14" textAnchor="middle" fontSize="11" fill={C.textMuted} fontFamily="monospace">HANOI URBAN ZONE</text>
+      <circle cx={serviceCenter.x} cy={serviceCenter.y} r={serviceRadius} fill={C.blue} opacity="0.08" stroke={C.blue} strokeWidth="1.5" strokeDasharray="7 7" />
+      {HUB_NODES.map(hub => {
+        const { x, y } = project(hub.lat, hub.lng);
+        const isWarehouse = hub.type === 'Warehouse';
+        return (
+          <g key={hub.id}>
+            <circle cx={x} cy={y} r={isWarehouse ? 9 : 7} fill={isWarehouse ? C.amber : C.green} stroke="#0F1117" strokeWidth="2" />
+            <text x={x} y={y + 3} textAnchor="middle" fontSize={isWarehouse ? 8 : 7} fontWeight="700" fill="#0F1117">{isWarehouse ? 'W' : 'S'}</text>
+          </g>
+        );
+      })}
+      {driverLocation && (() => {
+        const { x, y } = project(driverLocation.lat, driverLocation.lng);
+        return <circle cx={x} cy={y} r="10" fill="none" stroke={C.blue} strokeWidth="3" opacity="0.9" />;
+      })()}
       {points.map(p => {
         const { x, y } = project(p.lat, p.lng);
         const selected = selectedId === p.vehicleId;
@@ -571,12 +774,14 @@ function LocationModule({ vehicleLocations, vehicles }) {
     <div>
       <SectionTitle icon={Map} title="Live Driver Location" subtitle={`${points.length} vehicles tracked · Urban Hanoi · ${moving} currently moving`} />
 
-      <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 16 }}>
+      <div className="vfleet-location-grid">
         <div>
           <HanoiMapSvg points={filtered} selectedId={selectedId} onSelect={setSelectedId} />
           <div style={{ display: 'flex', gap: 14, marginTop: 8, fontSize: 11, color: C.textMuted, alignItems: 'center' }}>
             <span style={{ display: 'flex', alignItems: 'center', gap: 5 }}><span style={{ width: 8, height: 8, borderRadius: '50%', background: C.green, display: 'inline-block' }} /> Moving</span>
             <span style={{ display: 'flex', alignItems: 'center', gap: 5 }}><span style={{ width: 8, height: 8, borderRadius: '50%', background: C.textMuted, display: 'inline-block' }} /> Stationary</span>
+            <span style={{ display: 'flex', alignItems: 'center', gap: 5 }}><span style={{ width: 8, height: 8, borderRadius: '50%', background: C.amber, display: 'inline-block' }} /> Warehouse</span>
+            <span style={{ display: 'flex', alignItems: 'center', gap: 5 }}><span style={{ width: 8, height: 8, borderRadius: '50%', background: C.green, border: `1px solid ${C.textBright}`, display: 'inline-block' }} /> Swap Hub</span>
             <span style={{ marginLeft: 'auto' }}>Click a marker for details</span>
           </div>
         </div>
@@ -609,6 +814,8 @@ function LocationModule({ vehicleLocations, vehicles }) {
               <div style={{ fontSize: 12, color: C.textMuted, textAlign: 'center', padding: 8 }}>Select a vehicle marker or row to view details</div>
             </Card>
           )}
+
+          <HubListPanel compact />
 
           <div style={{ maxHeight: 250, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 4 }}>
             {filtered.map(p => (
@@ -1804,53 +2011,69 @@ function DriverBatteryHistoryModule({ vehicle, batteryHistory }) {
 
 // ── DRIVER: MY LOCATION ────────────────────────────────────────────────────────
 function DriverLocationModule({ vehicle, vehicleLocations }) {
+  const { driverLocation, geoStatus, findDriverLocation } = useBrowserLocation();
+
+  useEffect(() => {
+    findDriverLocation();
+  }, [findDriverLocation]);
+
   if (!vehicle) return <div style={{ color: C.textMuted }}>No vehicle data.</div>;
   const loc = vehicleLocations ? vehicleLocations[vehicle.id] : null;
+  const shownLoc = driverLocation
+    ? { ...driverLocation, area: 'Browser GPS', speedKmh: 0, vehicleId: vehicle.id }
+    : loc;
+  const fallbackPoints = driverLocation ? [] : (loc ? [loc] : []);
+
   return (
     <div>
-      <SectionTitle icon={Map} title="My Location" subtitle={`Live GPS — ${vehicle.id}`} />
-      <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 16 }}>
+      <SectionTitle icon={Map} title="My Location" subtitle={`Live GPS - ${vehicle.id}`} />
+      <div className="vfleet-location-grid">
         <div>
           <HanoiMapSvg
-            points={loc ? [loc] : []}
+            points={fallbackPoints}
             selectedId={vehicle.id}
             onSelect={() => {}}
+            driverLocation={driverLocation}
           />
           <div style={{ fontSize: 11, color: C.textMuted, marginTop: 6 }}>
             Your position is shown on the Hanoi Urban Zone map.
           </div>
         </div>
         <div>
-          {loc ? (
-            <Card style={{ border: `1px solid ${C.blue}44` }}>
+          {shownLoc ? (
+            <Card style={{ border: `1px solid ${C.blue}44`, marginBottom: 10 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
                 <Crosshair size={14} color={C.blue} />
                 <span style={{ color: C.blue, fontFamily: 'monospace', fontWeight: 700, fontSize: 13 }}>{vehicle.id}</span>
               </div>
               <div style={{ fontSize: 11, color: C.textMuted, marginBottom: 2 }}>Area</div>
-              <div style={{ fontSize: 12, color: C.text, marginBottom: 8 }}>📍 {loc.area}</div>
+              <div style={{ fontSize: 12, color: C.text, marginBottom: 8 }}>{shownLoc.area}</div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 11 }}>
-                <div style={{ color: C.textMuted }}>Lat: <span style={{ color: C.text, fontFamily: 'monospace' }}>{loc.lat.toFixed(5)}</span></div>
-                <div style={{ color: C.textMuted }}>Lng: <span style={{ color: C.text, fontFamily: 'monospace' }}>{loc.lng.toFixed(5)}</span></div>
-                <div style={{ color: C.textMuted }}>Speed: <span style={{ color: loc.speedKmh > 0 ? C.green : C.textMuted }}>{loc.speedKmh} km/h</span></div>
-                <div style={{ color: C.textMuted }}>Accuracy: <span style={{ color: C.text }}>±{loc.accuracy}m</span></div>
-                <div style={{ color: C.textMuted }}>Updated: <span style={{ color: C.text }}>{fmtTime(loc.lastUpdate)}</span></div>
+                <div style={{ color: C.textMuted }}>Lat: <span style={{ color: C.text, fontFamily: 'monospace' }}>{shownLoc.lat.toFixed(5)}</span></div>
+                <div style={{ color: C.textMuted }}>Lng: <span style={{ color: C.text, fontFamily: 'monospace' }}>{shownLoc.lng.toFixed(5)}</span></div>
+                <div style={{ color: C.textMuted }}>Speed: <span style={{ color: shownLoc.speedKmh > 0 ? C.green : C.textMuted }}>{shownLoc.speedKmh} km/h</span></div>
+                <div style={{ color: C.textMuted }}>Accuracy: <span style={{ color: C.text }}>+/-{shownLoc.accuracy}m</span></div>
+                <div style={{ color: C.textMuted }}>Updated: <span style={{ color: C.text }}>{fmtTime(shownLoc.lastUpdate)}</span></div>
               </div>
             </Card>
           ) : (
-            <Card>
+            <Card style={{ marginBottom: 10 }}>
               <div style={{ fontSize: 12, color: C.textMuted, textAlign: 'center', padding: 8 }}>Location not available</div>
             </Card>
           )}
+
+          <HubListPanel
+            driverLocation={driverLocation}
+            geoStatus={geoStatus}
+            onFindNearest={findDriverLocation}
+          />
         </div>
       </div>
     </div>
   );
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
-// ── DRIVER APP SHELL ──────────────────────────────────────────────────────────
-// ══════════════════════════════════════════════════════════════════════════════
+// DRIVER APP SHELL
 function DriverApp({ session, setSession, data, setData }) {
   const [activeModule, setActiveModule] = useState('driver-home');
   const toastTimers = useRef([]);
