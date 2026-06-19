@@ -439,8 +439,93 @@ function BatteryHistoryModule({ batteryHistory, batteries }) {
 
 // ── MODULE: LIVE LOCATION (Hanoi map) ────────────────────────────────────────────
 function HanoiMapSvg({ points, selectedId, onSelect, height = 380 }) {
+  const mapEl = useRef(null);
+  const mapRef = useRef(null);
+  const markerLayerRef = useRef(null);
+  const tileLayerRef = useRef(null);
   const { minLat, maxLat, minLng, maxLng } = HANOI_URBAN_BOUNDS;
   const W = 700, H = height;
+
+  useEffect(() => {
+    const L = window.L;
+    if (!L || !mapEl.current || mapRef.current) return;
+
+    const map = L.map(mapEl.current, {
+      zoomControl: true,
+      attributionControl: true,
+      scrollWheelZoom: true,
+      preferCanvas: true,
+    });
+
+    tileLayerRef.current = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+      attribution: '&copy; OpenStreetMap contributors',
+    }).addTo(map);
+
+    markerLayerRef.current = L.layerGroup().addTo(map);
+    map.fitBounds([[minLat, minLng], [maxLat, maxLng]], { padding: [16, 16] });
+    mapRef.current = map;
+
+    const resizeTimer = setTimeout(() => map.invalidateSize(), 50);
+    return () => {
+      clearTimeout(resizeTimer);
+      map.remove();
+      mapRef.current = null;
+      markerLayerRef.current = null;
+      tileLayerRef.current = null;
+    };
+  }, [maxLat, maxLng, minLat, minLng]);
+
+  useEffect(() => {
+    const L = window.L;
+    const map = mapRef.current;
+    const layer = markerLayerRef.current;
+    if (!L || !map || !layer) return;
+
+    layer.clearLayers();
+    points.forEach(p => {
+      const selected = selectedId === p.vehicleId;
+      const moving = p.speedKmh > 0;
+      const marker = L.marker([p.lat, p.lng], {
+        icon: L.divIcon({
+          className: '',
+          html: `<button class="vfleet-map-marker ${moving ? 'moving' : 'idle'} ${selected ? 'selected' : ''}" aria-label="${p.vehicleId} location"><span></span></button>`,
+          iconSize: selected ? [26, 26] : [18, 18],
+          iconAnchor: selected ? [13, 13] : [9, 9],
+        }),
+      });
+
+      marker.on('click', () => onSelect && onSelect(p.vehicleId));
+      marker.bindTooltip(`${p.vehicleId} · ${p.area}`, {
+        direction: 'top',
+        offset: [0, -10],
+        className: 'vfleet-map-tooltip',
+      });
+      marker.addTo(layer);
+    });
+
+    if (selectedId && points.some(p => p.vehicleId === selectedId)) {
+      const selected = points.find(p => p.vehicleId === selectedId);
+      map.setView([selected.lat, selected.lng], Math.max(map.getZoom(), 14), { animate: true });
+    } else if (points.length === 1) {
+      map.setView([points[0].lat, points[0].lng], 14);
+    } else if (points.length > 1) {
+      const bounds = L.latLngBounds(points.map(p => [p.lat, p.lng]));
+      map.fitBounds(bounds, { padding: [24, 24], maxZoom: 14 });
+    }
+
+    setTimeout(() => map.invalidateSize(), 0);
+  }, [onSelect, points, selectedId]);
+
+  if (typeof window !== 'undefined' && window.L) {
+    return (
+      <div style={{ position: 'relative' }}>
+        <div ref={mapEl} className="vfleet-leaflet-map" style={{ height }} />
+        <div className="vfleet-map-service-badge">OpenStreetMap live tiles</div>
+      </div>
+    );
+  }
+
   const project = (lat, lng) => {
     const x = ((lng - minLng) / (maxLng - minLng)) * (W - 40) + 20;
     const y = (1 - (lat - minLat) / (maxLat - minLat)) * (H - 40) + 20;
